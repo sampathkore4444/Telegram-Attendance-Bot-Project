@@ -11,6 +11,7 @@ import sqlite3
 import logging
 import calendar
 import asyncio
+import os
 
 # Set up logging to see what's happening
 logging.basicConfig(
@@ -18,7 +19,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "8246409206:AAEptjKmPkhDI1zrMJgciyR_xMWqCuCiv-A"
+BOT_TOKEN = os.environ.get(
+    "BOT_TOKEN", "8246409206:AAEptjKmPkhDI1zrMJgciyR_xMWqCuCiv-A"
+)
 
 
 # Initialize the SQLite Database
