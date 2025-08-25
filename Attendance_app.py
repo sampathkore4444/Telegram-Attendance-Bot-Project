@@ -52,6 +52,9 @@ def init_db():
                   user_name TEXT NOT NULL,
                   check_in_time TIMESTAMP NOT NULL,
                   check_out_time TIMESTAMP NOT NULL,
+                  check_in_date TEXT NOT NULL,  -- Store date separately
+                  check_in_time_only TEXT NOT NULL,  -- Store time separately
+                  check_out_time_only TEXT NOT NULL,  -- Store time separately
                   alert_sent INTEGER DEFAULT 0)"""
     )  # 0 = False, 1 = True
     conn.commit()
@@ -69,9 +72,20 @@ def get_db_connection():
 def add_check_in(user_id, user_name, check_in_time, check_out_time):
     conn = get_db_connection()
     c = conn.cursor()
+    bangkok_tz = pytz.timezone("Asia/Bangkok")
+    check_in_bangkok = check_in_time.astimezone(bangkok_tz)
+    check_out_bangkok = check_out_time.astimezone(bangkok_tz)
     c.execute(
-        "INSERT INTO attendance_records (user_id, user_name, check_in_time, check_out_time) VALUES (?, ?, ?, ?)",
-        (user_id, user_name, check_in_time, check_out_time),
+        "INSERT INTO attendance_records (user_id, user_name, check_in_time, check_out_time, check_in_date, check_in_time_only, check_out_time_only) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            user_name,
+            check_in_bangkok.isoformat(),
+            check_out_bangkok.isoformat(),
+            check_in_bangkok.strftime("%Y-%m-%d"),  # Store date
+            check_in_bangkok.strftime("%H:%M:%S"),  # Store time
+            check_out_bangkok.strftime("%H:%M:%S"),
+        ),  # Store time),
     )
     record_id = c.lastrowid  # Get the ID of the newly created record
     conn.commit()
@@ -86,9 +100,7 @@ def get_user_report(user_id, from_date, to_date):
     c = conn.cursor()
     c.execute(
         """
-        SELECT date(check_in_time) as date, 
-               time(check_in_time) as check_in, 
-               time(check_out_time) as check_out 
+        SELECT check_in_date, check_in_time_only, check_out_time_only 
         FROM attendance_records 
         WHERE user_id = ? 
         AND date(check_in_time) BETWEEN ? AND ?
