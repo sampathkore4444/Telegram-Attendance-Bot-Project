@@ -12,6 +12,11 @@ import logging
 import calendar
 import asyncio
 import os
+from time import time
+
+# Set the timezone for the application
+os.environ["TZ"] = "Asia/Kolkata"  # Change to your timezone
+time.tzset()  # Apply the timezone setting
 
 # Set up logging to see what's happening
 logging.basicConfig(
