@@ -14,7 +14,6 @@ import asyncio
 import os
 import pytz
 
-
 # Set up logging to see what's happening
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -25,26 +24,20 @@ BOT_TOKEN = os.environ.get(
     "BOT_TOKEN", "8246409206:AAEptjKmPkhDI1zrMJgciyR_xMWqCuCiv-A"
 )
 
+# Timezone configuration
+BANGKOK_TZ = pytz.timezone("Asia/Bangkok")
+
 
 def get_local_time():
-    """Get current time in your local timezone"""
-    local_tz = pytz.timezone("Asia/Bangkok")  # Change to your timezone
-    return datetime.now(local_tz)
-
-
-# Replace all datetime.now() with get_local_time()
-async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_name = update.effective_user.full_name
-    current_time = get_local_time()  # Use timezone-aware time
-    calculated_checkout = current_time + timedelta(hours=9)
+    """Get current time in Bangkok timezone"""
+    return datetime.now(BANGKOK_TZ)
 
 
 # Initialize the SQLite Database
 def init_db():
     conn = sqlite3.connect("attendance.db")
     c = conn.cursor()
-    # Create table
+    # Create table with separate date and time columns
     c.execute(
         """CREATE TABLE IF NOT EXISTS attendance_records
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,11 +45,11 @@ def init_db():
                   user_name TEXT NOT NULL,
                   check_in_time TIMESTAMP NOT NULL,
                   check_out_time TIMESTAMP NOT NULL,
-                  check_in_date TEXT NOT NULL,  -- Store date separately
-                  check_in_time_only TEXT NOT NULL,  -- Store time separately
-                  check_out_time_only TEXT NOT NULL,  -- Store time separately
+                  check_in_date TEXT NOT NULL,        -- Store date separately (YYYY-MM-DD)
+                  check_in_time_str TEXT NOT NULL,    -- Store time separately (HH:MM:SS)
+                  check_out_time_str TEXT NOT NULL,   -- Store time separately (HH:MM:SS)
                   alert_sent INTEGER DEFAULT 0)"""
-    )  # 0 = False, 1 = True
+    )
     conn.commit()
     conn.close()
 
@@ -64,7 +57,7 @@ def init_db():
 # Function to get a database connection
 def get_db_connection():
     conn = sqlite3.connect("attendance.db")
-    conn.row_factory = sqlite3.Row  # This enables name-based access to columns
+    conn.row_factory = sqlite3.Row
     return conn
 
 
@@ -72,22 +65,33 @@ def get_db_connection():
 def add_check_in(user_id, user_name, check_in_time, check_out_time):
     conn = get_db_connection()
     c = conn.cursor()
-    bangkok_tz = pytz.timezone("Asia/Bangkok")
-    check_in_bangkok = check_in_time.astimezone(bangkok_tz)
-    check_out_bangkok = check_out_time.astimezone(bangkok_tz)
+
+    # Ensure times are in Bangkok timezone
+    if check_in_time.tzinfo is None:
+        check_in_time = BANGKOK_TZ.localize(check_in_time)
+    if check_out_time.tzinfo is None:
+        check_out_time = BANGKOK_TZ.localize(check_out_time)
+
+    # Extract date and time components for easy querying
+    check_in_date = check_in_time.strftime("%Y-%m-%d")
+    check_in_time_str = check_in_time.strftime("%H:%M:%S")
+    check_out_time_str = check_out_time.strftime("%H:%M:%S")
+
     c.execute(
-        "INSERT INTO attendance_records (user_id, user_name, check_in_time, check_out_time, check_in_date, check_in_time_only, check_out_time_only) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        """INSERT INTO attendance_records 
+        (user_id, user_name, check_in_time, check_out_time, check_in_date, check_in_time_str, check_out_time_str) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
             user_id,
             user_name,
-            check_in_bangkok.isoformat(),
-            check_out_bangkok.isoformat(),
-            check_in_bangkok.strftime("%Y-%m-%d"),  # Store date
-            check_in_bangkok.strftime("%H:%M:%S"),  # Store time
-            check_out_bangkok.strftime("%H:%M:%S"),
-        ),  # Store time),
+            check_in_time.isoformat(),
+            check_out_time.isoformat(),
+            check_in_date,
+            check_in_time_str,
+            check_out_time_str,
+        ),
     )
-    record_id = c.lastrowid  # Get the ID of the newly created record
+    record_id = c.lastrowid
     conn.commit()
     conn.close()
     return record_id
@@ -100,11 +104,11 @@ def get_user_report(user_id, from_date, to_date):
     c = conn.cursor()
     c.execute(
         """
-        SELECT check_in_date, check_in_time_only, check_out_time_only 
+        SELECT check_in_date, check_in_time_str, check_out_time_str 
         FROM attendance_records 
         WHERE user_id = ? 
-        AND date(check_in_time) BETWEEN ? AND ?
-        ORDER BY check_in_time
+        AND check_in_date BETWEEN ? AND ?
+        ORDER BY check_in_date, check_in_time_str
     """,
         (user_id, from_date, to_date),
     )
@@ -114,7 +118,7 @@ def get_user_report(user_id, from_date, to_date):
     return records
 
 
-# Get pending alerts (check-out times that haven't passed yet and alerts not sent)
+# Get pending alerts (check-out times that have passed but alerts not sent)
 def get_pending_alerts():
     conn = get_db_connection()
     c = conn.cursor()
@@ -124,7 +128,7 @@ def get_pending_alerts():
         """
         SELECT id, user_id, user_name, check_out_time 
         FROM attendance_records 
-        WHERE check_out_time > ? AND alert_sent = 0
+        WHERE check_out_time <= ? AND alert_sent = 0
     """,
         (current_time,),
     )
@@ -147,8 +151,10 @@ async def set_commands(application: Application):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
+    current_time = get_local_time()
     help_text = (
-        "Welcome to the Attendance Bot! 📊\n\n"
+        f"Welcome to the Attendance Bot! 📊\n\n"
+        f"🕒 Server Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} (Bangkok)\n\n"
         "Available Commands:\n"
         "✅ /checkin - Record your check-in time\n"
         "📊 /report - Generate attendance report (with date picker!)\n"
@@ -179,9 +185,7 @@ async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     calculated_checkout = current_time + timedelta(hours=9)
 
     # Add record to the database
-    record_id = add_check_in(
-        user_id, user_name, current_time.isoformat(), calculated_checkout.isoformat()
-    )
+    record_id = add_check_in(user_id, user_name, current_time, calculated_checkout)
 
     # Format the times for a nice message
     check_in_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -241,10 +245,13 @@ async def send_checkout_alert(context: ContextTypes.DEFAULT_TYPE):
     if record:
         user_name = record["user_name"]
         check_out_time = datetime.fromisoformat(record["check_out_time"])
+        # Convert to Bangkok time for display
+        check_out_bangkok = check_out_time.astimezone(BANGKOK_TZ)
+
         message = (
             f"🛎️ *ALERT for {user_name}!* 🛎️\n"
             "It's time to check out! Don't forget to submit your report.\n"
-            f"Your calculated check-out was: {check_out_time.strftime('%H:%M:%S')}"
+            f"Your calculated check-out was: {check_out_bangkok.strftime('%H:%M:%S')}"
         )
         # Mark alert as sent in the database
         c.execute(
@@ -275,8 +282,6 @@ async def restore_pending_alerts(application: Application):
             delay = (check_out_time - get_local_time()).total_seconds()
 
             if delay > 0:  # Only restore if check-out time is still in the future
-                # For now, we'll just log that we found a pending alert
-                # In a production system, you'd store chat_id in the database and reschedule
                 logger.info(
                     f"Pending alert found for record {record_id} (in {delay:.0f} seconds)"
                 )
@@ -476,7 +481,7 @@ async def generate_and_send_report(
         message_lines = [f"📊 Attendance Report for {from_date} to {to_date}:\n"]
         for record in records:
             message_lines.append(
-                f"📅 {record['date']} | ⏰ In: {record['check_in']} | 🏠 Out: {record['check_out']}"
+                f"📅 {record['check_in_date']} | ⏰ In: {record['check_in_time_str']} | 🏠 Out: {record['check_out_time_str']}"
             )
         message = "\n".join(message_lines)
     else:
@@ -517,7 +522,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("checkin", checkin))
     application.add_handler(CommandHandler("report", report))
-    application.add_handler(CommandHandler("jobs", list_jobs))  # Optional debug command
+    application.add_handler(CommandHandler("jobs", list_jobs))
 
     # Add callback handler for calendar
     application.add_handler(CallbackQueryHandler(handle_calendar_callback))
@@ -526,7 +531,7 @@ def main():
     application.post_init = post_init
 
     # Start the Bot
-    print("Bot is running with persistent alerts...")
+    print("Bot is running with Bangkok timezone...")
     application.run_polling()
 
 
