@@ -12,11 +12,8 @@ import logging
 import calendar
 import asyncio
 import os
-from time import time
+import pytz
 
-# Set the timezone for the application
-os.environ["TZ"] = "Asia/Kolkata"  # Change to your timezone
-time.tzset()  # Apply the timezone setting
 
 # Set up logging to see what's happening
 logging.basicConfig(
@@ -27,6 +24,20 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get(
     "BOT_TOKEN", "8246409206:AAEptjKmPkhDI1zrMJgciyR_xMWqCuCiv-A"
 )
+
+
+def get_local_time():
+    """Get current time in your local timezone"""
+    local_tz = pytz.timezone("Asia/Bangkok")  # Change to your timezone
+    return datetime.now(local_tz)
+
+
+# Replace all datetime.now() with get_local_time()
+async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_name = update.effective_user.full_name
+    current_time = get_local_time()  # Use timezone-aware time
+    calculated_checkout = current_time + timedelta(hours=9)
 
 
 # Initialize the SQLite Database
@@ -95,7 +106,7 @@ def get_user_report(user_id, from_date, to_date):
 def get_pending_alerts():
     conn = get_db_connection()
     c = conn.cursor()
-    current_time = datetime.now().isoformat()
+    current_time = get_local_time().isoformat()
 
     c.execute(
         """
@@ -152,7 +163,7 @@ async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /checkin command."""
     user_id = update.effective_user.id
     user_name = update.effective_user.full_name
-    current_time = datetime.now()
+    current_time = get_local_time()
     calculated_checkout = current_time + timedelta(hours=9)
 
     # Add record to the database
@@ -187,7 +198,7 @@ def schedule_checkout_alert(
     chat_id: int,
 ):
     """Schedule a checkout alert job"""
-    delay = (check_out_time - datetime.now()).total_seconds()
+    delay = (check_out_time - get_local_time()).total_seconds()
 
     if delay > 0:  # Only schedule if check-out time is in the future
         job = context.job_queue.run_once(
@@ -249,7 +260,7 @@ async def restore_pending_alerts(application: Application):
             check_out_time = datetime.fromisoformat(alert["check_out_time"])
 
             # Calculate delay until check-out time
-            delay = (check_out_time - datetime.now()).total_seconds()
+            delay = (check_out_time - get_local_time()).total_seconds()
 
             if delay > 0:  # Only restore if check-out time is still in the future
                 # For now, we'll just log that we found a pending alert
@@ -275,7 +286,7 @@ async def restore_pending_alerts(application: Application):
 
 def generate_calendar_keyboard(year=None, month=None):
     """Generate an inline keyboard calendar for date selection"""
-    now = datetime.now()
+    now = get_local_time()
     if year is None:
         year = now.year
     if month is None:
